@@ -1,0 +1,977 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Real Estate Application Infrastructure - Python Version'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  S3BucketName:
+    Type: String
+    Description: S3 bucket containing Lambda code
+  LambdaS3Key:
+    Type: String
+    Description: S3 key for Lambda code package
+
+Resources:
+  AgentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Agent
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: agentId
+          AttributeType: S
+        - AttributeName: officeId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: agentId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: office-index
+          KeySchema:
+            - AttributeName: officeId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  PropertyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Property
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: propertyId
+          AttributeType: S
+        - AttributeName: agentId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: propertyId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-index
+          KeySchema:
+            - AttributeName: agentId
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AppointmentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Appointment
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: appointmentId
+          AttributeType: S
+        - AttributeName: agentId
+          AttributeType: S
+        - AttributeName: clientId
+          AttributeType: S
+        - AttributeName: appointmentDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: appointmentId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-date-index
+          KeySchema:
+            - AttributeName: agentId
+              KeyType: HASH
+            - AttributeName: appointmentDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: client-date-index
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+            - AttributeName: appointmentDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ClientAgentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-ClientAgent
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: clientId
+          AttributeType: S
+        - AttributeName: agentId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: client-index
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: agent-index
+          KeySchema:
+            - AttributeName: agentId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # Lambda Layer
+  LambdaDependencyLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub ${Environment}-RealEstate-Dependencies
+      Description: Layer for boto3 and other dependencies
+      CompatibleRuntimes:
+        - python3.9
+      Content:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Sub ${Environment}-dependencies.zip
+      LicenseInfo: MIT
+
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-RealEstateLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-*
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-*/index/*
+
+  # Lambda Functions
+  AgentLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-AgentFunction
+      Handler: agent_lambda_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref LambdaS3Key
+      Runtime: python3.9
+      Layers:
+        - !Ref LambdaDependencyLayer
+      MemorySize: 1024
+      Timeout: 30
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          POWERTOOLS_SERVICE_NAME: agent-service
+          POWERTOOLS_METRICS_NAMESPACE: RealEstate
+
+  ClientLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-ClientFunction
+      Handler: client_lambda_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref LambdaS3Key
+      Runtime: python3.9
+      Layers:
+        - !Ref LambdaDependencyLayer
+      MemorySize: 1024
+      Timeout: 30
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          POWERTOOLS_SERVICE_NAME: client-service
+          POWERTOOLS_METRICS_NAMESPACE: RealEstate
+
+  # Base Resources
+  AgentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !GetAtt RealEstateAPI.RootResourceId
+      PathPart: api
+
+  # GetAgent Resource and Methods
+  GetAgentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getAgent
+
+  GetAgentMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetAgentResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetAgentOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetAgentResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  GetAppointmentsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getAppointments
+
+  GetAppointmentsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetAppointmentsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetAppointmentsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetAppointmentsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  GetClientsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getClients
+
+  GetClientsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetClientsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetClientsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetClientsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # GetTransactions Resource and Methods
+  GetTransactionsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getTransactions
+
+  GetTransactionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetTransactionsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetTransactionsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetTransactionsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  AddPropertyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AddPropertyResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  AddPropertyOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AddPropertyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # GetOffice Resource and Methods
+  GetOfficeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getOffice
+
+  GetOfficeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetOfficeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetOfficeOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetOfficeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # GetProperties Resource and Methods
+  GetPropertiesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getProperties
+
+  GetPropertiesMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetPropertiesResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetPropertiesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetPropertiesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  OfficeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Office
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: officeId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: officeId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  TransactionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Transaction
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: transactionId
+          AttributeType: S
+        - AttributeName: agentId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transactionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-index
+          KeySchema:
+            - AttributeName: agentId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ClientTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-Client
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: clientId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: clientId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # AddTransaction Resource and Methods
+  AddTransactionResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: addTransaction
+
+  AddTransactionMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AddTransactionResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  AddTransactionOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AddTransactionResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # Lambda Permissions
+  AgentLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AgentLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealEstateAPI}/*/*
+
+  ClientLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ClientLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealEstateAPI}/*/*
+
+  # API Gateway
+  RealEstateAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ${Environment}-RealEstateAPI
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      MinimumCompressionSize: 1024
+      BinaryMediaTypes:
+        - multipart/form-data
+        - application/octet-stream
+
+  AgentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !GetAtt RealEstateAPI.RootResourceId
+      PathPart: api
+
+  AgentSubResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: agent
+
+  AddPropertyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: addProperty
+
+  ClientResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: client
+
+  # GetClient Resource and Methods
+  GetClientResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ParentId: !Ref AgentResource
+      PathPart: getClient
+
+  AgentProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AgentSubResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  ApiCorsConfiguration:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: '{}'
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+      ResourceId: !GetAtt RealEstateAPI.RootResourceId
+      RestApiId: !Ref RealEstateAPI
+
+  GetClientMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetClientResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ClientLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GetClientOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref GetClientResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST,GET,PUT,DELETE'"
+            ResponseTemplates:
+              application/json: |
+                {"statusCode": 200}
+        RequestTemplates:
+          application/json: |
+            {"statusCode": 200}
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  AgentOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref AgentSubResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  ClientProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+      ResourceId: !Ref ClientResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ClientLambda.Arn}/invocations
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GetAgentMethod
+      - GetAgentOptionsMethod
+      - GetAppointmentsMethod
+      - GetAppointmentsOptionsMethod
+      - GetClientsMethod
+      - GetClientsOptionsMethod
+      - GetTransactionsMethod
+      - GetTransactionsOptionsMethod
+      - GetOfficeMethod
+      - GetOfficeOptionsMethod
+      - GetPropertiesMethod
+      - GetPropertiesOptionsMethod
+      - AddPropertyMethod
+      - AddPropertyOptionsMethod
+      - AddTransactionMethod
+      - AddTransactionOptionsMethod
+    Properties:
+      RestApiId: !Ref RealEstateAPI
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      RestApiId: !Ref RealEstateAPI
+      StageName: !Ref Environment
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          MetricsEnabled: true
+          DataTraceEnabled: true
+          LoggingLevel: INFO
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${RealEstateAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+  AgentFunction:
+    Description: Agent Lambda Function ARN
+    Value: !GetAtt AgentLambda.Arn
+  ClientFunction:
+    Description: Client Lambda Function ARN
+    Value: !GetAtt ClientLambda.Arn

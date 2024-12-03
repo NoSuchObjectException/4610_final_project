@@ -4,8 +4,10 @@ import ClientDashboard from './ClientDashboard';
 
 const ClientPage = () => {
   const [clientID, setClientID] = useState('');
-  const[loggedInClient, setLoggedInClient] = useState({});
+  const [loggedInClient, setLoggedInClient] = useState({});
   const [loggedIn, setLoggedIn] = useState(false);
+
+  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
 
   const handleIDChange = (e) => {
     setClientID(e.target.value);
@@ -13,33 +15,61 @@ const ClientPage = () => {
 
   const handleGetClient = async () => {
     try {
-      const response = await axios.post('http://localhost:8080/api/client/getClient', { clientID : clientID });
-      console.log(response.data);
+      if (!clientID || clientID.trim() === '') {
+        alert('Please enter a Client ID');
+        return;
+      }
+
+      console.log('Calling API with clientId:', clientID.trim());
+      
+      const response = await axios.post(`${API_BASE_URL}/getClient`, {
+        action: 'get_client',  // Add this line
+        clientId: clientID.trim()
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      console.log('Raw response:', response.data);
+      
+      if (!response.data) {
+        throw new Error('No data received from server');
+      }
+
       setLoggedInClient(response.data);
       setLoggedIn(true);
-
     } catch (error) {
-      console.error('Error getting client:', error.response);
+      console.error('Error getting client:', error);
+      const errorMessage = error.response?.data?.message 
+        || error.message 
+        || 'Failed to retrieve client information';
+      alert(`Error: ${errorMessage}`);
     }
   };
 
-  if(!loggedIn){
+  if (!loggedIn) {
     return (
       <div style={styles.container}>
         <h2 style={styles.title}>Enter Client ID</h2>
-        <input type="text" name="clientID" placeholder="Client ID" style={styles.input} onChange={handleIDChange} />
-        <button style={styles.button} onClick={handleGetClient}>View Information</button>
+        <input 
+          type="text" 
+          name="clientID" 
+          placeholder="Client ID" 
+          style={styles.input} 
+          onChange={handleIDChange} 
+        />
+        <button style={styles.button} onClick={handleGetClient}>
+          View Information
+        </button>
         <h3>The following Client IDs are pre-populated: 1, 2</h3>
       </div>
     );
-  }else{
-    return(
-      <>
-      <ClientDashboard client={loggedInClient}></ClientDashboard>
-      </>
-    )
+  } else {
+    return (
+      <ClientDashboard client={loggedInClient} />
+    );
   }
-  
 };
 
 const styles = {

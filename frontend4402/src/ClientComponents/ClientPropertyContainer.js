@@ -2,101 +2,105 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
-import './clientProp.css'; // Assuming this file is in the same directory
+import './clientProp.css';
 
-const PropertyContainer = (props) => {
-  const { CLIENT_ID, updateData } = props; // Extracting CLIENT_ID and updateData from props
+const PropertyContainer = ({ CLIENT_ID, updateData }) => {
   const [properties, setProperties] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [agent, setAgent] = useState({});
+  const [apptStatus, setApptStatus] = useState('');
 
-  const [apptStatus, setApptStatus] = useState();
+  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
 
   const [appointmentForm, setAppointmentForm] = useState({
-    propertyID: "",
     appt_date: "",
     appt_time: "",
     purpose: "",
   });
 
-
-  const handleAddAppointment = async (event) => {
+  const handleAddAppointment = async () => {
     try {
-      console.log(appointmentForm);
-      const response = await axios.post(
-        "http://localhost:8080/api/client/addAppointment",
-        {
-          agentID: properties[currentIndex].AGENT_ID,
-          clientID: CLIENT_ID,
-          propertyID: properties[currentIndex].PROPERTY_ID,
-          date: appointmentForm.appt_date,
-          time: appointmentForm.appt_time,
+      if (!properties[currentIndex]?.AGENT_ID || !CLIENT_ID) {
+        setApptStatus("Missing agent or client information");
+        return;
+      }
+
+      const response = await axios.post(`${API_BASE_URL}/addAppointment`, {
+        action: 'add_appointment',
+        appointment: {
+          agentId: properties[currentIndex].AGENT_ID,
+          clientId: CLIENT_ID,
+          propertyId: properties[currentIndex].PROPERTY_ID,
+          appointmentDate: appointmentForm.appt_date,
+          appointmentTime: appointmentForm.appt_time,
           purpose: appointmentForm.purpose,
         }
-      );
-      const appointmentID = response.data;
-      console.log(response.data);
-      if (appointmentID != -1) {
+      });
+
+      if (response.data) {
         setApptStatus("Successfully scheduled appointment!");
         updateData();
+        // Clear form
+        setAppointmentForm({
+          appt_date: "",
+          appt_time: "",
+          purpose: "",
+        });
       } else {
         setApptStatus("Failed to schedule appointment.");
       }
     } catch (error) {
-      setApptStatus("Error adding appointment: " + JSON.stringify(error.response.data));
-      console.error("Error adding a appointment", JSON.stringify(error.response.data));
+      setApptStatus("Error adding appointment: " + (error.response?.data?.message || error.message));
+      console.error("Error adding appointment:", error);
     }
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setAppointmentForm({
-      ...appointmentForm,
-      [name]: value,
-    });
+    setAppointmentForm(prev => ({
+      ...prev,
+      [name]: value
+    }));
   };
-
 
   useEffect(() => {
-    // Fetch properties from the API
-    axios
-      .post('http://localhost:8080/api/client/getProperties')
-      .then(async (response) => {
-        setProperties(response.data);
-      })
-      .catch(error => setProperties(["Error"]));
+    const fetchProperties = async () => {
+      try {
+        const response = await axios.post(`${API_BASE_URL}/getProperties`, {
+          action: 'get_properties'
+        });
+        setProperties(response.data || []);
+      } catch (error) {
+        console.error('Error fetching properties:', error);
+        setProperties([]);
+      }
+    };
+
+    fetchProperties();
   }, []);
 
-  const handleGetPropertyAgent = async (curAgent) => {
+  const handleGetPropertyAgent = async (agentId) => {
     try {
-      const response = await axios.post(
-        "http://localhost:8080/api/client/getPropertyAgent",
-        {
-          agentID: curAgent,
-        }
-      );
-      const agent = response.data;
-      setAgent(agent);
-      updateData();
+      const response = await axios.post(`${API_BASE_URL}/getAgent`, {
+        action: 'get_property_agent',
+        agentId: agentId
+      });
+      setAgent(response.data || {});
     } catch (error) {
-      console.log(error);
+      console.error('Error fetching agent:', error);
+      setAgent({});
     }
-    
   };
 
-  const handleKeyDown = useCallback(
-    (event) => {
-      if (event.keyCode === 37) {
-        // Left arrow key
-        setCurrentIndex(prevIndex => (prevIndex === 0 ? properties.length - 1 : prevIndex - 1));
-      } else if (event.keyCode === 39) {
-        // Right arrow key
-        setCurrentIndex(prevIndex => (prevIndex === properties.length - 1 ? 0 : prevIndex + 1));
-      }
-    },
-    [properties.length]
-  );
-
+  const handleKeyDown = useCallback((event) => {
+    if (event.keyCode === 37) {
+      // Left arrow key
+      setCurrentIndex(prevIndex => (prevIndex === 0 ? properties.length - 1 : prevIndex - 1));
+    } else if (event.keyCode === 39) {
+      // Right arrow key
+      setCurrentIndex(prevIndex => (prevIndex === properties.length - 1 ? 0 : prevIndex + 1));
+    }
+  }, [properties.length]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -111,45 +115,62 @@ const PropertyContainer = (props) => {
     } else if (direction === 'next') {
       setCurrentIndex(prevIndex => (prevIndex === properties.length - 1 ? 0 : prevIndex + 1));
     }
-    updateData();
     setAgent({});
   };
 
+  if (!properties.length) {
+    return <div>Loading properties...</div>;
+  }
+
   return (
     <div className="property-container">
-      {properties.length > 0 && (<>
-        <div className="custom-slide">
-          <div className="arrow left-arrow" onClick={() => navigateProperty('prev')}>
-            <FontAwesomeIcon icon={faChevronLeft} />
-          </div>
-          <div className="property-content">
-            <h2>{properties[currentIndex].PROPERTY_TYPE}</h2>
-            <img className='image' src={properties[currentIndex].IMAGE_URL} alt="Property Image" />
-            <p>{properties[currentIndex].STREET}, {properties[currentIndex].CITY}, {properties[currentIndex].STATE} - {properties[currentIndex].ZIPCODE}</p>
-            <p>Price: ${properties[currentIndex].LIST_PRICE} Bedrooms: {properties[currentIndex].NUM_BEDROOMS} Bathrooms: {properties[currentIndex].NUM_BATHROOMS}</p>
-            <p>{properties[currentIndex].DESCRIPTION}</p>
-
-            <button style={styles.button2} onClick={() => handleGetPropertyAgent(properties[currentIndex].AGENT_ID)}  >Get Contact Info</button>
-            {Object.keys(agent).length > 0 && (
-              <div>
-                <p>Agent Information: {agent.FIRST_NAME} {agent.LAST_NAME}, Email: {agent.EMAIL}, Phone: {agent.PHONE}</p>
-              </div>
-            )}
-            {Object.keys(agent).length <= 0 && (
-              <div>
-                <p> Click Above to see Agent Information! </p>
-              </div>
-            )}
-
-          </div>
-          <div className="arrow right-arrow" onClick={() => navigateProperty('next')}>
-            <FontAwesomeIcon icon={faChevronRight} />
-          </div>
+      <div className="custom-slide">
+        <div className="arrow left-arrow" onClick={() => navigateProperty('prev')}>
+          <FontAwesomeIcon icon={faChevronLeft} />
         </div>
-        <div>
-        <section style={styles.section}>
+        <div className="property-content">
+          <h2>{properties[currentIndex].PROPERTY_TYPE}</h2>
+          <img 
+            className='image' 
+            src={properties[currentIndex].IMAGE_URL} 
+            alt="Property" 
+            onError={(e) => {
+              e.target.src = 'https://via.placeholder.com/400x300?text=No+Image+Available';
+            }}
+          />
+          <p>{properties[currentIndex].STREET}, {properties[currentIndex].CITY}, {properties[currentIndex].STATE} - {properties[currentIndex].ZIPCODE}</p>
+          <p>Price: ${properties[currentIndex].LIST_PRICE?.toLocaleString()} </p>
+          <p>Bedrooms: {properties[currentIndex].NUM_BEDROOMS} Bathrooms: {properties[currentIndex].NUM_BATHROOMS}</p>
+          <p>{properties[currentIndex].DESCRIPTION}</p>
+
+          <button 
+            style={styles.button2} 
+            onClick={() => handleGetPropertyAgent(properties[currentIndex].AGENT_ID)}
+          >
+            Get Contact Info
+          </button>
+          
+          {Object.keys(agent).length > 0 ? (
+            <div>
+              <p>Agent Information: {agent.firstName} {agent.lastName}</p>
+              <p>Email: {agent.email}</p>
+              <p>Phone: {agent.phone}</p>
+            </div>
+          ) : (
+            <div>
+              <p>Click above to see Agent Information!</p>
+            </div>
+          )}
+        </div>
+        <div className="arrow right-arrow" onClick={() => navigateProperty('next')}>
+          <FontAwesomeIcon icon={faChevronRight} />
+        </div>
+      </div>
+
+      <section style={styles.section}>
         <h3>Schedule an Appointment for this {properties[currentIndex].PROPERTY_TYPE} Now!</h3>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop:'15px' }} >
+        <div style={styles.appointmentForm}>
+          <div style={styles.formRow}>
             <label style={styles.label}>
               Appointment Date:
               <input
@@ -164,40 +185,43 @@ const PropertyContainer = (props) => {
             <label style={styles.label}>
               Appointment Time:
               <input
-              style={styles.input2}
-              type="time"
-              min="09:00" // Set the minimum time to 09:00 (9 AM)
-              max="17:00" // Set the maximum time to 17:00 (5 PM)
-
-              name="appt_time"
-              value={appointmentForm.appt_time}
-              onChange={handleChange}
-        
-            />
-            </label>
-            
-            </div>
-            <label style={styles.label}>
-              Appointment Purpose:
-              <input
                 style={styles.input2}
-                type="text"
-                name="purpose"
-                maxLength={50}
-                value={appointmentForm.purpose}
+                type="time"
+                min="09:00"
+                max="17:00"
+                name="appt_time"
+                value={appointmentForm.appt_time}
                 onChange={handleChange}
               />
             </label>
-            <button style={styles.button} onClick={() => handleAddAppointment()} >Schedule Appointment</button>
-            <p>{apptStatus}</p>
+          </div>
+          
+          <label style={styles.label}>
+            Appointment Purpose:
+            <input
+              style={styles.input2}
+              type="text"
+              name="purpose"
+              maxLength={50}
+              value={appointmentForm.purpose}
+              onChange={handleChange}
+              placeholder="Brief description of appointment purpose"
+            />
+          </label>
+
+          <button 
+            style={styles.button} 
+            onClick={handleAddAppointment}
+            disabled={!appointmentForm.appt_date || !appointmentForm.appt_time || !appointmentForm.purpose}
+          >
+            Schedule Appointment
+          </button>
+          {apptStatus && <p style={styles.status}>{apptStatus}</p>}
+        </div>
       </section>
-      </div>
-        </>
-      )}
     </div>
   );
 };
-
 
 const styles = {
   section: {
@@ -207,6 +231,17 @@ const styles = {
     alignItems: 'center',
     textAlign: 'center',
   },
+  appointmentForm: {
+    width: '100%',
+    maxWidth: '600px',
+    padding: '20px',
+  },
+  formRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: '20px',
+    gap: '20px',
+  },
   input: {
     width: "100%",
     padding: "10px",
@@ -214,14 +249,13 @@ const styles = {
     border: "1px solid #ccc",
     borderRadius: "5px",
   },
-  input2:{
-    width:"80%",
+  input2: {
+    width: "100%",
     padding: "10px",
-    marginLeft:"20px",
-    marginRight:"20px",
     fontSize: "16px",
     border: "1px solid #ccc",
     borderRadius: "5px",
+    marginTop: '5px',
   },
   button: {
     width: "80%",
@@ -232,6 +266,11 @@ const styles = {
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
+    marginTop: '20px',
+    ':disabled': {
+      backgroundColor: '#cccccc',
+      cursor: 'not-allowed',
+    }
   },
   button2: {
     width: "150px",
@@ -242,10 +281,20 @@ const styles = {
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
+    marginBottom: '10px',
   },
   label: {
     marginBottom: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    textAlign: 'left',
   },
+  status: {
+    marginTop: '10px',
+    color: '#4CAF50',
+    fontWeight: 'bold',
+  }
 };
 
 export default PropertyContainer;

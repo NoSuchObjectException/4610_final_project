@@ -7,24 +7,50 @@ const AgentPage = () => {
   const [loggedInAgent, setLoggedInAgent] = useState({});
   const [loggedIn, setLoggedIn] = useState(false);
 
+  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
+
   const handleIDChange = (e) => {
     setAgentID(e.target.value);
   };
 
   const handleGetAgent = async () => {
     try {
-      const response = await axios.post(
-        "http://localhost:8080/api/agent/getAgent",
-        { agentID: agentID }
-      );
-      console.log(response.data);
-      setLoggedInAgent(response.data);
-      setLoggedIn(true);
-    } catch (error) {
-      console.error("Error getting agent:", error.response);
-    }
-  };
+        if (!agentID || agentID.trim() === '') {
+            alert('Please enter an Agent ID');
+            return;
+        }
 
+        console.log('Calling API with agentId:', agentID.trim());
+        
+        const response = await axios.post(`${API_BASE_URL}/getAgent`, {
+            agentId: agentID.trim()
+        });
+        
+        if (!response.data) {
+            throw new Error('No data received from server');
+        }
+
+        // Transform the response data to match expected format
+        const transformedData = {
+            FIRST_NAME: response.data.firstName,
+            LAST_NAME: response.data.lastName,
+            EMAIL: response.data.email,
+            PHONE: response.data.phone,
+            LICENSE_NUMBER: response.data.licenseNumber,
+            AGENT_ID: response.data.agentId
+        };
+
+        setLoggedInAgent(transformedData);
+        setLoggedIn(true);
+    } catch (error) {
+        console.error('API Error:', error);
+        const errorMessage = error.response?.data?.message 
+            || error.response?.data?.error
+            || error.message 
+            || 'Failed to retrieve agent information';
+        alert(`Error: ${errorMessage}`);
+    }
+};
 
   if (!loggedIn) {
     return (
@@ -46,7 +72,7 @@ const AgentPage = () => {
   } else {
     return (
       <>
-      <AgentDashboard agent={loggedInAgent}></AgentDashboard>
+      <AgentDashboard agent={loggedInAgent} />
       </>
     );
   }

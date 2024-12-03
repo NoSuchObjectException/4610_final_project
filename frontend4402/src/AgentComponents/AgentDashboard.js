@@ -8,28 +8,31 @@ const AgentDashboard = (agent) => {
   const [transactions, setTransactions] = useState([]);
   const [offices, setOffices] = useState([]);
 
+
+  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
   const { FIRST_NAME, LAST_NAME, EMAIL, PHONE, LICENSE_NUMBER, AGENT_ID } =
     agent.agent;
 
   const refreshData = async () => {
     try {
+      if (!AGENT_ID) return;
       const [
         appointmentsResponse,
         transactionsResponse,
         clientsResponse,
         officesResponse,
       ] = await Promise.all([
-        axios.post("http://localhost:8080/api/agent/getAppointments", {
-          agentID: AGENT_ID,
+        axios.post(`${API_BASE_URL}/getAppointments`, {
+          agentId: AGENT_ID
         }),
-        axios.post("http://localhost:8080/api/agent/getTransactions", {
-          agentID: AGENT_ID,
+        axios.post(`${API_BASE_URL}/getTransactions`, {
+          agentId: AGENT_ID
         }),
-        axios.post("http://localhost:8080/api/agent/getClients", {
-          agentID: AGENT_ID,
+        axios.post(`${API_BASE_URL}/getClients`, {
+          agentId: AGENT_ID
         }),
-        axios.post("http://localhost:8080/api/agent/getOffice", {
-          agentID: AGENT_ID,
+        axios.post(`${API_BASE_URL}/getOffice`, {
+          agentId: AGENT_ID
         }),
       ]);
 
@@ -38,61 +41,69 @@ const AgentDashboard = (agent) => {
       setClients(clientsResponse.data);
       setOffices(officesResponse.data);
     } catch (error) {
-      setAppointments(["Error"]);
-      setTransactions(["Error"]);
-      setClients(["Error"]);
-      setOffices(["Error"]);
+      console.error("Error refreshing data:", error);
+      setAppointments([]);
+      setTransactions([]);
+      setClients([]);
+      setOffices([]);
     }
   };
 
   const fetchData = async (apiEndpoint, setDataFunction) => {
     try {
+      if (!AGENT_ID) {
+        console.error("No agent ID available");
+        return;
+      }
+
+      console.log(`Fetching data for agent ${AGENT_ID} from ${apiEndpoint}`);
       const response = await axios.post(apiEndpoint, {
-        agentID: AGENT_ID,
+        agentId: AGENT_ID
       });
-      setDataFunction(response.data);
+      console.log(`Response from ${apiEndpoint}:`, response.data);
+      setDataFunction(response.data || []);
     } catch (error) {
-      setDataFunction(["Error"]);
+      console.error(`Error fetching data from ${apiEndpoint}:`, error);
+      setDataFunction([]);
     }
   };
 
   useEffect(() => {
-    fetchData("http://localhost:8080/api/agent/getOffice", setOffices);
-  }, []);
+    if (!AGENT_ID) {
+      console.log("No agent ID available, skipping data fetch");
+      return;
+    }
 
-  useEffect(() => {
-    fetchData(
-      "http://localhost:8080/api/agent/getAppointments",
-      setAppointments
-    );
-  }, []);
+    console.log("Initializing data fetch for agent:", AGENT_ID);
+    
+    // Initial data fetch
+    const endpoints = [
+      { url: `${API_BASE_URL}/getOffice`, setter: setOffices },
+      { url: `${API_BASE_URL}/getAppointments`, setter: setAppointments },
+      { url: `${API_BASE_URL}/getClients`, setter: setClients },
+      { url: `${API_BASE_URL}/getTransactions`, setter: setTransactions }
+    ];
 
-  useEffect(() => {
-    fetchData("http://localhost:8080/api/agent/getClients", setClients);
-  }, []);
+    // Fetch initial data
+    const fetchInitialData = async () => {
+      try {
+        await Promise.all(endpoints.map(endpoint => 
+          fetchData(endpoint.url, endpoint.setter)
+        ));
+      } catch (error) {
+        console.error("Error fetching initial data:", error);
+      }
+    };
 
-  useEffect(() => {
-    fetchData(
-      "http://localhost:8080/api/agent/getTransactions",
-      setTransactions
-    );
-  }, []);
+    fetchInitialData();
 
-  useEffect(() => {
+    // Set up polling
     const intervalId = setInterval(() => {
-      fetchData("http://localhost:8080/api/agent/getOffice", setOffices);
-      fetchData(
-        "http://localhost:8080/api/agent/getAppointments",
-        setAppointments
-      );
-      fetchData("http://localhost:8080/api/agent/getClients", setClients);
-      fetchData(
-        "http://localhost:8080/api/agent/getTransactions",
-        setTransactions
-      );
+      fetchInitialData();
     }, 5000);
+
     return () => clearInterval(intervalId);
-  }, []);
+  }, [AGENT_ID, API_BASE_URL]);
 
   return (
     <div style={styles.container}>

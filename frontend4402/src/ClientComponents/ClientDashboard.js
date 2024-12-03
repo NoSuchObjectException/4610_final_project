@@ -2,205 +2,192 @@ import React, { useState, useEffect } from "react";
 import ClientPropertyContainer from "./ClientPropertyContainer";
 import axios from "axios";
 
-const ClientDashboard = (client) => {
+const ClientDashboard = ({ client }) => {
   const [agents, setAgents] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [appointments, setAppointments] = useState([]);
 
+  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
+
   const {
-    FIRST_NAME,
-    LAST_NAME,
-    EMAIL,
-    PHONE,
-    STREET,
-    CITY,
-    STATE,
-    ZIPCODE,
-    CLIENT_ID,
-  } = client.client;
+    firstName: FIRST_NAME,
+    lastName: LAST_NAME,
+    email: EMAIL,
+    phone: PHONE,
+    street: STREET,
+    city: CITY,
+    state: STATE,
+    zipcode: ZIPCODE,
+    clientId: CLIENT_ID,
+  } = client;
 
   useEffect(() => {
-    // Fetch properties from the API
-    axios
-      .post("http://localhost:8080/api/client/getAppointments", {
-        clientID: CLIENT_ID,
-      })
-      .then(async (response) => {
-        setAppointments(response.data);
-      })
-      .catch((error) => setAppointments(["Error"]));
-  }, []);
+    if (CLIENT_ID) {
+      fetchAppointments();
+      fetchTransactions();
+      fetchAgents();
+    }
+  }, [CLIENT_ID]);
 
-  useEffect(() => {
-    // Fetch properties from the API
-    axios
-      .post("http://localhost:8080/api/client/getTransactions", {
-        clientID: CLIENT_ID,
-      })
-      .then(async (response) => {
-        setTransactions(response.data);
-      })
-      .catch((error) => setTransactions(["Error"]));
-  }, []);
+  const fetchAppointments = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/getClientAppointments`, {
+        action: 'get_appointments',
+        clientId: CLIENT_ID
+      });
+      setAppointments(response.data || []);
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      setAppointments([]);
+    }
+  };
 
-  useEffect(() => {
-    // Fetch properties from the API
-    axios
-      .post("http://localhost:8080/api/client/getAgents", {
-        clientID: CLIENT_ID,
-      })
-      .then(async (response) => {
-        setAgents(response.data);
-      })
-      .catch((error) => setAgents(["Error"]));
-  }, []);
+  const fetchTransactions = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/getClientTransactions`, {
+        action: 'get_transactions',
+        clientId: CLIENT_ID
+      });
+      setTransactions(response.data || []);
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      setTransactions([]);
+    }
+  };
+
+  const fetchAgents = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/getClientAgents`, {
+        action: 'get_agents',
+        clientId: CLIENT_ID
+      });
+      setAgents(response.data || []);
+    } catch (error) {
+      console.error('Error fetching agents:', error);
+      setAgents([]);
+    }
+  };
 
   const handlePayTransaction = async (transactionID) => {
     try {
-      const response = await axios.post(
-        "http://localhost:8080/api/client/payTransaction",
-        { transactionID: transactionID }
-      );
+      const response = await axios.post(`${API_BASE_URL}/payTransaction`, {
+        action: 'pay_transaction',
+        transactionId: transactionID
+      });
       refreshData();
     } catch (error) {
-      console.error("Error paying transaction:", error.response);
+      console.error("Error paying transaction:", error);
     }
   };
 
   const refreshData = async () => {
-    try {
-      const [appointmentsResponse, transactionsResponse, agentsResponse] =
-        await Promise.all([
-          axios.post("http://localhost:8080/api/client/getAppointments", {
-            clientID: CLIENT_ID,
-          }),
-          axios.post("http://localhost:8080/api/client/getTransactions", {
-            clientID: CLIENT_ID,
-          }),
-          axios.post("http://localhost:8080/api/client/getAgents", {
-            clientID: CLIENT_ID,
-          }),
-        ]);
-
-      setAppointments(appointmentsResponse.data);
-      setTransactions(transactionsResponse.data);
-      setAgents(agentsResponse.data);
-    } catch (error) {
-      // Handle errors if any request fails
-      setAppointments(["Error"]);
-      setTransactions(["Error"]);
-      setAgents(["Error"]);
-    }
+    Promise.all([
+      fetchAppointments(),
+      fetchTransactions(),
+      fetchAgents()
+    ]).catch(error => {
+      console.error('Error refreshing data:', error);
+    });
   };
 
   return (
-    <>
-      <div style={styles.container}>
-        <div style={styles.container}>
-          <h1 style={styles.title}>Client Dashboard</h1>
-          <div style={styles.profileSection}>
-            <p>Client ID: {CLIENT_ID} </p>
-            <p>
-              Client Name: {FIRST_NAME} {LAST_NAME}
-            </p>
-            <p>Email: {EMAIL}</p>
-            <p>Phone: {PHONE}</p>
-            <p>
-              Address: {STREET}, {STATE} {ZIPCODE}
-            </p>
-          </div>
-          <section style={styles.section}>
-            <h2>All Properties</h2>
-            <ClientPropertyContainer
-              CLIENT_ID={CLIENT_ID}
-              updateData={refreshData} // Pass this function to trigger data update
-            ></ClientPropertyContainer>
-          </section>
-        </div>
-
-        <section style={styles.section2}>
-          <h2>View Your Appointments</h2>
-          <div style={styles.scrollContainer}>
-            {appointments.map((appointment, index) => (
-              <div
-                key={index}
-                style={{
-                  ...styles.appointmentCard,
-                  marginRight: index !== appointments.length - 1 ? "20px" : "0",
-                }}
-              >
-                <h2>Appointment {index + 1}</h2>
-                <p>Client ID: {appointment.CLIENT_ID}</p>
-                <p>Agent ID: {appointment.AGENT_ID}</p>
-                <p>Property ID: {appointment.PROPERTY_ID}</p>
-                <p>Date: {appointment.APPT_DATE}</p>
-                <p>Time: {appointment.APPT_TIME}</p>
-                <p>Purpose: {appointment.PURPOSE}</p>
-                {/* Add other details here as needed */}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section style={styles.section2}>
-          <h2>View Your Agents</h2>
-          <div style={styles.scrollContainer}>
-            {agents.map((agent, index) => (
-              <div
-                key={index}
-                style={{
-                  ...styles.appointmentCard,
-                  marginRight: index !== agents.length - 1 ? "20px" : "0",
-                }}
-              >
-                <h2>{`${agent.FIRST_NAME} ${agent.LAST_NAME}`}</h2>
-                <p>Email: {agent.EMAIL}</p>
-                <p>Phone: {agent.PHONE}</p>
-                <p>License Number: {agent.LICENSE_NUMBER}</p>
-                <p>Date Hired: {agent.DATE_HIRED}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section style={styles.section2}>
-          <h2>View Your Transactions</h2>
-          <div style={styles.scrollContainer}>
-            {transactions.map((transaction, index) => (
-              <div
-                key={index}
-                style={{
-                  ...styles.appointmentCard,
-                  marginRight: index !== transactions.length - 1 ? "20px" : "0",
-                }}
-              >
-                <h2>Transaction {index + 1}</h2>
-                <p>Property ID: {transaction.PROPERTY_ID}</p>
-                <p>Agent ID: {transaction.AGENT_ID}</p>
-                <p>Client ID: {transaction.CLIENT_ID}</p>
-                {transaction.DATE_SENT ? (
-                  <p>Date Sent: {transaction.DATE_SENT}</p>
-                ) : (
-                  <p>Status: UNPAID</p>
-                )}
-                <p>Amount: {transaction.AMOUNT}</p>
-                <p>Type: {transaction.TYPE}</p>
-                {transaction.DATE_SENT === null && (
-                  <button
-                    style={styles.button}
-                    onClick={() =>
-                      handlePayTransaction(transaction.TRANSACTION_ID)
-                    }
-                  >
-                    Pay Transaction
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
+    <div style={styles.container}>
+      <h1 style={styles.title}>Client Dashboard</h1>
+      <div style={styles.profileSection}>
+        <p>Client ID: {CLIENT_ID} </p>
+        <p>Client Name: {FIRST_NAME} {LAST_NAME}</p>
+        <p>Email: {EMAIL}</p>
+        <p>Phone: {PHONE}</p>
+        <p>Address: {STREET}, {STATE} {ZIPCODE}</p>
       </div>
-    </>
+
+      <section style={styles.section}>
+        <h2>All Properties</h2>
+        <ClientPropertyContainer
+          CLIENT_ID={CLIENT_ID}
+          updateData={refreshData}
+        />
+      </section>
+
+      <section style={styles.section2}>
+        <h2>View Your Appointments</h2>
+        <div style={styles.scrollContainer}>
+          {appointments.map((appointment, index) => (
+            <div
+              key={index}
+              style={{
+                ...styles.appointmentCard,
+                marginRight: index !== appointments.length - 1 ? "20px" : "0",
+              }}
+            >
+              <h2>Appointment {index + 1}</h2>
+              <p>Client ID: {appointment.clientId}</p>
+              <p>Agent ID: {appointment.agentId}</p>
+              <p>Property ID: {appointment.propertyId}</p>
+              <p>Date: {appointment.appointmentDate}</p>
+              <p>Time: {appointment.appointmentTime}</p>
+              <p>Purpose: {appointment.purpose}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={styles.section2}>
+        <h2>View Your Agents</h2>
+        <div style={styles.scrollContainer}>
+          {agents.map((agent, index) => (
+            <div
+              key={index}
+              style={{
+                ...styles.appointmentCard,
+                marginRight: index !== agents.length - 1 ? "20px" : "0",
+              }}
+            >
+              <h2>{`${agent.firstName} ${agent.lastName}`}</h2>
+              <p>Email: {agent.email}</p>
+              <p>Phone: {agent.phone}</p>
+              <p>License Number: {agent.licenseNumber}</p>
+              <p>Date Hired: {agent.dateHired}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={styles.section2}>
+        <h2>View Your Transactions</h2>
+        <div style={styles.scrollContainer}>
+          {transactions.map((transaction, index) => (
+            <div
+              key={index}
+              style={{
+                ...styles.appointmentCard,
+                marginRight: index !== transactions.length - 1 ? "20px" : "0",
+              }}
+            >
+              <h2>Transaction {index + 1}</h2>
+              <p>Property ID: {transaction.propertyId}</p>
+              <p>Agent ID: {transaction.agentId}</p>
+              <p>Client ID: {transaction.clientId}</p>
+              {transaction.dateSent ? (
+                <p>Date Sent: {transaction.dateSent}</p>
+              ) : (
+                <p>Status: UNPAID</p>
+              )}
+              <p>Amount: {transaction.amount}</p>
+              <p>Type: {transaction.transactionType}</p>
+              {!transaction.dateSent && (
+                <button
+                  style={styles.button}
+                  onClick={() => handlePayTransaction(transaction.transactionId)}
+                >
+                  Pay Transaction
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 };
 
