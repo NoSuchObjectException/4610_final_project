@@ -51,13 +51,18 @@ def handler(event, context):
             except json.JSONDecodeError:
                 return create_response(400, {'message': 'Invalid JSON in request body'})
 
+        agent_service = AgentService()
+
+        # Handle getProperties separately without requiring agentId
+        if path == 'getProperties':
+            result = agent_service.get_properties()
+            return create_response(200, result)
+
         # Only check for root-level agentId for endpoints that need it
-        if path in ['getAgent', 'getAppointments', 'getClients', 'getTransactions', 'getOffice', 'getProperties']:
+        if path in ['getAgent', 'getAppointments', 'getClients', 'getTransactions', 'getOffice']:
             agent_id = body.get('agentId')
             if not agent_id:
                 return create_response(400, {'message': 'agentId is required'})
-
-            agent_service = AgentService()
 
             # Route to appropriate handler based on path
             if path == 'getAgent':
@@ -82,10 +87,6 @@ def handler(event, context):
                 result = agent_service.get_office(agent_id)
                 if result is None:
                     return create_response(404, {'message': 'Office not found'})
-                return create_response(200, result)
-
-            elif path == 'getProperties':
-                result = agent_service.get_agent_properties(agent_id)
                 return create_response(200, result)
 
         elif path == 'addProperty':
@@ -124,7 +125,6 @@ def handler(event, context):
                     'error': str(e)
                 })
 
-            agent_service = AgentService()
             try:
                 property_id = agent_service.add_property(property_data)
                 return create_response(200, {'propertyId': property_id})
@@ -155,7 +155,6 @@ def handler(event, context):
                         'message': f'Invalid transaction type. Must be one of: {", ".join(valid_types)}'
                     })
 
-                agent_service = AgentService()
                 transaction_id = agent_service.add_transaction(body)
                 return create_response(200, {'transactionId': transaction_id})
             except ValueError as ve:

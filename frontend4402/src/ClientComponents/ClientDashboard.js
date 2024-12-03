@@ -7,7 +7,7 @@ const ClientDashboard = ({ client }) => {
   const [transactions, setTransactions] = useState([]);
   const [appointments, setAppointments] = useState([]);
 
-  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
+  const API_BASE_URL = "https://5pq8iah053.execute-api.us-east-1.amazonaws.com/dev/api";
 
   const {
     firstName: FIRST_NAME,

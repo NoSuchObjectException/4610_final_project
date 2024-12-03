@@ -10,7 +10,7 @@ const PropertyContainer = ({ CLIENT_ID, updateData }) => {
   const [agent, setAgent] = useState({});
   const [apptStatus, setApptStatus] = useState('');
 
-  const API_BASE_URL = "https://acyx49drq5.execute-api.us-east-1.amazonaws.com/dev/api";
+  const API_BASE_URL = "https://5pq8iah053.execute-api.us-east-1.amazonaws.com/dev/api";
 
   const [appointmentForm, setAppointmentForm] = useState({
     appt_date: "",
@@ -20,38 +20,53 @@ const PropertyContainer = ({ CLIENT_ID, updateData }) => {
 
   const handleAddAppointment = async () => {
     try {
-      if (!properties[currentIndex]?.AGENT_ID || !CLIENT_ID) {
-        setApptStatus("Missing agent or client information");
+      const currentProperty = properties[currentIndex];
+      console.log('Current property data:', currentProperty);
+      
+      const propertyId = currentProperty?.propertyId || currentProperty?.PROPERTY_ID;
+      const agentId = currentProperty?.agentId || currentProperty?.AGENT_ID;
+      
+      if (!agentId || !CLIENT_ID || !propertyId) {
+        console.error('Missing required fields:', { agentId, clientId: CLIENT_ID, propertyId });
+        setApptStatus("Missing required information. Please contact support.");
         return;
       }
-
-      const response = await axios.post(`${API_BASE_URL}/addAppointment`, {
+  
+      const appointmentDateTime = `${appointmentForm.appt_date}T${appointmentForm.appt_time}:00`;
+      
+      const appointmentData = {
         action: 'add_appointment',
+        clientId: CLIENT_ID,
         appointment: {
-          agentId: properties[currentIndex].AGENT_ID,
+          agentId: agentId,
           clientId: CLIENT_ID,
-          propertyId: properties[currentIndex].PROPERTY_ID,
-          appointmentDate: appointmentForm.appt_date,
-          appointmentTime: appointmentForm.appt_time,
+          propertyId: propertyId,
+          appointmentDate: appointmentDateTime,
           purpose: appointmentForm.purpose,
+          status: 'SCHEDULED'
         }
-      });
-
+      };
+  
+      console.log('Sending appointment data:', appointmentData);
+  
+      // Changed from /api/addAppointment to /api to match other working endpoints
+      const response = await axios.post(`${API_BASE_URL}/addAppointment`, appointmentData);
+      
+      console.log('Appointment response:', response.data);
+  
       if (response.data) {
         setApptStatus("Successfully scheduled appointment!");
         updateData();
-        // Clear form
         setAppointmentForm({
           appt_date: "",
           appt_time: "",
           purpose: "",
         });
-      } else {
-        setApptStatus("Failed to schedule appointment.");
       }
     } catch (error) {
-      setApptStatus("Error adding appointment: " + (error.response?.data?.message || error.message));
-      console.error("Error adding appointment:", error);
+      const errorMessage = error.response?.data?.message || error.message;
+      console.error("Error adding appointment:", error.response?.data || error);
+      setApptStatus("Error adding appointment: " + errorMessage);
     }
   };
 
@@ -69,7 +84,18 @@ const PropertyContainer = ({ CLIENT_ID, updateData }) => {
         const response = await axios.post(`${API_BASE_URL}/getProperties`, {
           action: 'get_properties'
         });
-        setProperties(response.data || []);
+        console.log('Raw property data:', response.data); // Debug log
+        
+        // Transform the data to ensure consistent field names
+        const transformedProperties = (response.data || []).map(property => ({
+          ...property,
+          AGENT_ID: property.agentId || property.AGENT_ID,
+          PROPERTY_ID: property.propertyId || property.PROPERTY_ID,
+          // Add other field transformations as needed
+        }));
+        
+        console.log('Transformed properties:', transformedProperties); // Debug log
+        setProperties(transformedProperties);
       } catch (error) {
         console.error('Error fetching properties:', error);
         setProperties([]);
@@ -79,18 +105,30 @@ const PropertyContainer = ({ CLIENT_ID, updateData }) => {
     fetchProperties();
   }, []);
 
+
   const handleGetPropertyAgent = async (agentId) => {
+    console.log('Property data:', properties[currentIndex]); // Debug log
+    
+    if (!agentId) {
+      console.error('No agentId available');
+      setApptStatus('Error: Agent ID not found');
+      return;
+    }
+    
     try {
       const response = await axios.post(`${API_BASE_URL}/getAgent`, {
         action: 'get_property_agent',
-        agentId: agentId
+        agentId: agentId,
+        clientId: CLIENT_ID
       });
+      console.log('Agent response:', response.data); // Debug log
       setAgent(response.data || {});
     } catch (error) {
-      console.error('Error fetching agent:', error);
+      console.error('Error fetching agent:', error.response?.data || error);
       setAgent({});
     }
   };
+  
 
   const handleKeyDown = useCallback((event) => {
     if (event.keyCode === 37) {

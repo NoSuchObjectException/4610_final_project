@@ -15,6 +15,16 @@ class AgentService:
         """Helper method to get table with proper prefix"""
         return self.dynamodb.Table(f"{self.table_prefix}{table_name}")
 
+    def get_properties(self) -> List[Dict[str, Any]]:
+        """Get all properties"""
+        try:
+            table = self._get_table('Property')
+            response = table.scan()
+            return response.get('Items', [])
+        except Exception as e:
+            print(f"Error getting properties: {str(e)}")
+            raise
+
     def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
         """Get agent by ID"""
         try:

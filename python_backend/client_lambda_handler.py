@@ -4,7 +4,15 @@ import boto3
 import traceback
 import uuid
 from typing import Dict, Any
+from decimal import Decimal
 from client_service import ClientService
+
+class DecimalEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle Decimal types"""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return str(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 def create_response(status_code: int, body: Any) -> Dict[str, Any]:
     print(f"Creating response with status code: {status_code} and body: {body}")
@@ -16,7 +24,7 @@ def create_response(status_code: int, body: Any) -> Dict[str, Any]:
             'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
             'Content-Type': 'application/json'
         },
-        'body': json.dumps(body) if not isinstance(body, str) else body
+        'body': json.dumps(body, cls=DecimalEncoder) if not isinstance(body, str) else body
     }
 
 class ClientLambdaHandler:
@@ -33,14 +41,42 @@ class ClientLambdaHandler:
             print(f"[{request_id}] No action provided in request")
             return create_response(400, {'message': 'Action is required'})
 
+        # Special case for get_properties which doesn't require clientId
+        if action == 'get_properties':
+            print(f"[{request_id}] Fetching all properties")
+            try:
+                properties = self.client_service.get_properties()
+                print(f"[{request_id}] Retrieved {len(properties)} properties")
+                return create_response(200, properties)
+            except Exception as e:
+                error_details = {
+                    'requestId': request_id,
+                    'message': 'Error retrieving properties',
+                    'error': str(e),
+                    'type': e.__class__.__name__,
+                    'action': action
+                }
+                print(f"[{request_id}] Error details: {json.dumps(error_details)}")
+                return create_response(500, error_details)
+
+        # For all other actions, require clientId
         client_id = event_body.get('clientId')
-        if not client_id:
+        if not client_id and action != 'get_properties':
             print(f"[{request_id}] No clientId provided in request")
             return create_response(400, {'message': 'Client ID is required'})
 
         try:
             print(f"[{request_id}] Executing {action} for client: {client_id}")
             
+            if action == 'get_property_agent':
+                agent_id = event_body.get('agentId')
+                if not agent_id:
+                    return create_response(400, {'message': 'agentId is required'})
+                agent = self.client_service.get_property_agent(agent_id)
+                if not agent:
+                    return create_response(404, {'message': 'Agent not found'})
+                return create_response(200, agent)
+
             if action == 'get_appointments':
                 print(f"[{request_id}] Fetching appointments for client {client_id}")
                 appointments = self.client_service.get_appointments(client_id)
@@ -64,10 +100,6 @@ class ClientLambdaHandler:
                 if not client:
                     return create_response(404, {'message': 'Client not found'})
                 return create_response(200, client)
-
-            elif action == 'get_properties':
-                properties = self.client_service.get_properties()
-                return create_response(200, properties)
 
             elif action == 'add_appointment':
                 appointment_data = event_body.get('appointment')

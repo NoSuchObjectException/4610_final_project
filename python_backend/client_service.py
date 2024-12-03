@@ -24,11 +24,15 @@ class ClientService:
 
     def get_properties(self) -> List[Dict[str, Any]]:
         try:
+            print("[DEBUG] Attempting to get properties")
             table = self._get_table('Property')
+            print(f"[DEBUG] Accessing table: {self.table_prefix}Property")
             response = table.scan()
+            print(f"[DEBUG] Scan response: {response}")
             return response.get('Items', [])
         except Exception as e:
-            print(f"Error getting properties: {str(e)}")
+            print(f"[DEBUG] Error getting properties: {str(e)}")
+            print(f"[DEBUG] Error type: {type(e)}")
             raise
 
     def get_property_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
@@ -70,29 +74,66 @@ class ClientService:
             raise
 
     def query_with_index(self, table_name: str, index_name: str, 
-                        key_name: str, key_value: str) -> List[Dict[str, Any]]:
-        print(f"[QUERY] Querying {table_name} with index {index_name} for {key_name}={key_value}")
+                    key_name: str, key_value: str) -> List[Dict[str, Any]]:
+        print(f"[QUERY DEBUG] Starting query with parameters:")
+        print(f"[QUERY DEBUG] Table: {table_name}")
+        print(f"[QUERY DEBUG] Index: {index_name}")
+        print(f"[QUERY DEBUG] Key: {key_name}={key_value}")
+        
         table = self._get_table(table_name)
         try:
+            # First, verify the table exists
+            try:
+                table.table_status
+                print(f"[QUERY DEBUG] Table {table_name} exists and is accessible")
+            except Exception as e:
+                print(f"[QUERY DEBUG] Error accessing table: {str(e)}")
+                raise
+
+            # Attempt the query
+            print(f"[QUERY DEBUG] Executing query on table")
             response = table.query(
                 IndexName=index_name,
-                KeyConditionExpression=Key(key_name).eq(key_value)
+                KeyConditionExpression=f"{key_name} = :value",
+                ExpressionAttributeValues={
+                    ':value': key_value
+                }
             )
+            
             items = response.get('Items', [])
-            print(f"[QUERY] Found {len(items)} items in {table_name}")
+            print(f"[QUERY DEBUG] Query successful. Found {len(items)} items")
+            if len(items) > 0:
+                print(f"[QUERY DEBUG] Sample item keys: {list(items[0].keys())}")
             return items
+        
         except Exception as e:
-            print(f"[ERROR] Failed to query {table_name}: {str(e)}")
+            print(f"[QUERY DEBUG] Error executing query: {str(e)}")
+            print(f"[QUERY DEBUG] Error type: {type(e).__name__}")
             raise
 
     def get_appointments(self, client_id: str) -> List[Dict[str, Any]]:
-        print(f"[SERVICE] Getting appointments for client: {client_id}")
+        print(f"[APPOINTMENT DEBUG] Getting appointments for client: {client_id}")
         try:
+            # First, verify the client exists
+            client_table = self._get_table('Client')
+            client = client_table.get_item(Key={'clientId': client_id}).get('Item')
+            if not client:
+                print(f"[APPOINTMENT DEBUG] Client {client_id} not found")
+                return []
+            
+            print(f"[APPOINTMENT DEBUG] Client {client_id} exists, fetching appointments")
             result = self.query_with_index('Appointment', 'client-index', 'clientId', client_id)
-            print(f"[SERVICE] Found {len(result)} appointments")
+            print(f"[APPOINTMENT DEBUG] Retrieved {len(result)} appointments")
+            
+            # Log the structure of each appointment for debugging
+            for idx, appt in enumerate(result):
+                print(f"[APPOINTMENT DEBUG] Appointment {idx + 1} structure:")
+                print(f"[APPOINTMENT DEBUG] Keys: {list(appt.keys())}")
+            
             return result
         except Exception as e:
-            print(f"[ERROR] Failed to get appointments: {str(e)}")
+            print(f"[APPOINTMENT DEBUG] Error: {str(e)}")
+            print(f"[APPOINTMENT DEBUG] Error type: {type(e).__name__}")
             raise
 
     def get_agents(self, client_id: str) -> List[Dict[str, Any]]:
